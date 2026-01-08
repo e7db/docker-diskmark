@@ -317,7 +317,7 @@ if [ $WARMUP -eq 1 ]; then
   else
     FILESOURCE=/dev/urandom
   fi
-  dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs="$BYTESIZE" count=1 oflag=direct
+  dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs="$BYTESIZE" count=1 oflag=direct iflag=fullblock
 fi
 
 for ((i = 0; i < ${#NAME[@]}; i++)); do
