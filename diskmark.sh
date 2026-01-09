@@ -2,6 +2,35 @@
 
 set -e
 
+detect_color_support() {
+  if [[ "$TERM" == "dumb" ]]; then
+    echo 0
+  else
+    echo 1
+  fi
+}
+
+detect_emoji_support() {
+  if [[ "$TERM" == "dumb" ]]; then
+    echo 0
+  else
+    echo 1
+  fi
+}
+
+if [[ -z "$COLOR" ]]; then
+  COLOR=$(detect_color_support)
+elif [[ ! "$COLOR" =~ ^[01]$ ]]; then
+  echo "Error: COLOR must be either 0 or 1." >&2
+  exit 1
+fi
+if [[ -z "$EMOJI" ]]; then
+  EMOJI=$(detect_emoji_support)
+elif [[ ! "$EMOJI" =~ ^[01]$ ]]; then
+  echo "Error: EMOJI must be either 0 or 1." >&2
+  exit 1
+fi
+
 RESET="0m"
 NORMAL="0"
 BOLD="1"
@@ -15,8 +44,24 @@ CYAN=";36m"
 WHITE=";37m"
 
 function color() {
-  echo "\e[$1$2"
+  if [[ "$COLOR" -eq 1 ]]; then
+    echo "\e[$1$2"
+  else
+    echo ""
+  fi
 }
+
+if [[ "$EMOJI" -eq 1 ]]; then
+  SYM_SUCCESS="✅"
+  SYM_FAILURE="❌"
+  SYM_STOP="🛑"
+  SYM_ARROW="➤"
+else
+  SYM_SUCCESS="[OK]"
+  SYM_FAILURE="[FAIL]"
+  SYM_STOP="[STOP]"
+  SYM_ARROW=">"
+fi
 
 function clean() {
   [[ -z $TARGET ]] && return
@@ -29,9 +74,9 @@ function clean() {
 
 function interrupt() {
   local EXIT_CODE="${1:-0}"
-  echo -e "\r\n\n🛑 The benchmark was $(color $BOLD $RED)interrupted$(color $RESET)."
+  echo -e "\r\n\n$SYM_STOP The benchmark was $(color $BOLD $RED)interrupted$(color $RESET)."
   if [ ! -z "$2" ]; then
-    echo -e "➤ $2"
+    echo -e "$SYM_ARROW $2"
   fi
   clean
   exit "${EXIT_CODE}"
@@ -40,9 +85,9 @@ trap 'interrupt $? "The benchmark was aborted before its completion."' HUP INT Q
 
 function fail() {
   local EXIT_CODE="${1:-1}"
-  echo -e "\r\n\n❌ The benchmark had $(color $BOLD $RED)failed$(color $RESET)."
+  echo -e "\r\n\n$SYM_FAILURE The benchmark had $(color $BOLD $RED)failed$(color $RESET)."
   if [ ! -z "$2" ]; then
-    echo -e "➤ $2"
+    echo -e "$SYM_ARROW $2"
   fi
   clean
   exit "${EXIT_CODE}"
@@ -51,12 +96,79 @@ trap 'fail $? "The benchmark failed before its completion."' ERR
 
 function error() {
   local EXIT_CODE="${1:-1}"
-  echo -e "\r\n❌ The benchmark encountered an $(color $BOLD $RED)error$(color $RESET)."
+  echo -e "\r\n$SYM_FAILURE The benchmark encountered an $(color $BOLD $RED)error$(color $RESET)."
   if [ ! -z "$2" ]; then
-    echo -e "➤ $2"
+    echo -e "$SYM_ARROW $2"
   fi
   clean
   exit "${EXIT_CODE}"
+}
+
+function requireCommand() {
+  command -v "$1" >/dev/null 2>&1 || fail 1 "Missing required dependency: $(color $BOLD $WHITE)$1$(color $RESET). Please install it and try again."
+}
+
+function validateSizeString() {
+  local VALUE="$1"
+  local LABEL="$2"
+  if [[ -z "$VALUE" ]]; then
+    error 1 "$LABEL must be provided."
+  fi
+  if [[ ! "$VALUE" =~ ^[0-9]+([KkMmGgTtPp])?$ ]]; then
+    error 1 "$LABEL must be a positive integer optionally followed by K, M, G, T, or P (example: 1G)."
+  fi
+  local BYTES=$(toBytes "$VALUE")
+  if [[ -z "$BYTES" || "$BYTES" -le 0 ]]; then
+    error 1 "$LABEL must be greater than zero."
+  fi
+}
+
+function validateBinaryFlag() {
+  local VALUE="$1"
+  local LABEL="$2"
+  if [[ ! "$VALUE" =~ ^[01]$ ]]; then
+    error 1 "$LABEL must be either 0 or 1."
+  fi
+}
+
+function validateRuntime() {
+  local VALUE="$1"
+  if [[ -z "$VALUE" ]]; then
+    return 0
+  fi
+  if [[ ! "$VALUE" =~ ^[0-9]+(ms|s|m|h)$ ]]; then
+    error 1 "RUNTIME must match the fio time format (e.g., 500ms, 5s, 2m, 1h)."
+  fi
+}
+
+function validateInteger() {
+  local VALUE="$1"
+  local LABEL="$2"
+  local ALLOW_ZERO="${3:-0}"
+  local REGEX='^[1-9][0-9]*$'
+  local ERROR_MSG="$LABEL must be a positive integer."
+
+  if [[ "$ALLOW_ZERO" -eq 1 ]]; then
+    REGEX='^[0-9]+$'
+    ERROR_MSG="$LABEL must be a non-negative integer."
+  fi
+
+  if [[ -z "$VALUE" ]]; then
+    error 1 "$LABEL must be provided."
+  fi
+  if [[ ! "$VALUE" =~ $REGEX ]]; then
+    error 1 "$ERROR_MSG"
+  fi
+}
+
+function ensureWritableTarget() {
+  local PATH_TO_CHECK="$1"
+  if [[ "$PATH_TO_CHECK" == "/" ]]; then
+    error 1 "Refusing to run against the filesystem root. Please set TARGET to a dedicated directory."
+  fi
+  if [[ -d "$PATH_TO_CHECK" && ! -w "$PATH_TO_CHECK" ]]; then
+    error 1 "TARGET directory is not writable: $PATH_TO_CHECK"
+  fi
 }
 
 function toBytes() {
@@ -64,6 +176,7 @@ function toBytes() {
   local UNIT=${SIZE//[0-9]/}
   local NUMBER=${SIZE//[a-zA-Z]/}
   case $UNIT in
+    P|p) echo $((NUMBER * 1024 * 1024 * 1024 * 1024 * 1024));;
     T|t) echo $((NUMBER * 1024 * 1024 * 1024 * 1024));;
     G|g) echo $((NUMBER * 1024 * 1024 * 1024));;
     M|m) echo $((NUMBER * 1024 * 1024));;
@@ -124,7 +237,7 @@ function parseRandomWriteResult() {
 function loadDefaultProfile() {
   NAME=("SEQ1MQ8T1" "SEQ1MQ1T1" "RND4KQ32T1" "RND4KQ1T1")
   LABEL=("Sequential 1M Q8T1" "Sequential 1M Q1T1" "Random 4K Q32T1" "Random 4K Q1T1")
-  COLOR=($(color $NORMAL $YELLOW) $(color $NORMAL $YELLOW) $(color $NORMAL $CYAN) $(color $NORMAL $CYAN))
+  JOBCOLOR=($(color $NORMAL $YELLOW) $(color $NORMAL $YELLOW) $(color $NORMAL $CYAN) $(color $NORMAL $CYAN))
   BLOCKSIZE=("1M" "1M" "4K" "4K")
   IODEPTH=(8 1 32 1)
   NUMJOBS=(1 1 1 1)
@@ -135,7 +248,7 @@ function loadDefaultProfile() {
 function loadNVMeProfile() {
   NAME=("SEQ1MQ8T1" "SEQ128KQ32T1" "RND4KQ32T16" "RND4KQ1T1")
   LABEL=("Sequential 1M Q8T1" "Sequential 128K Q32T1" "Random 4K Q32T16" "Random 4K Q1T1")
-  COLOR=($(color $NORMAL $YELLOW) $(color $NORMAL $GREEN) $(color $NORMAL $CYAN) $(color $NORMAL $CYAN))
+  JOBCOLOR=($(color $NORMAL $YELLOW) $(color $NORMAL $GREEN) $(color $NORMAL $CYAN) $(color $NORMAL $CYAN))
   BLOCKSIZE=("1M" "128K" "4K" "4K")
   IODEPTH=(8 32 32 1)
   NUMJOBS=(1 1 16 1)
@@ -165,16 +278,49 @@ function loadJob() {
 
   NAME=($JOB)
   LABEL="$READWRITELABEL $BLOCKSIZE Q${IODEPTH}T${NUMJOBS}"
-  COLOR=($(color $NORMAL $MAGENTA))
+  JOBCOLOR=($(color $NORMAL $MAGENTA))
 }
 
+requireCommand fio
+requireCommand dd
+requireCommand awk
+requireCommand df
+if [[ -n "$JOB" ]]; then
+  requireCommand perl
+fi
+
 TARGET="${TARGET:-$(pwd)}"
+ensureWritableTarget "$TARGET"
 if [ ! -d "$TARGET" ]; then
   ISNEWDIR=1
   mkdir -p "$TARGET"
 fi
+
+validateSizeString "${SIZE:-1G}" "SIZE"
+validateBinaryFlag "${WARMUP:-0}" "WARMUP"
+validateBinaryFlag "${DRY_RUN:-0}" "DRY_RUN"
+if [[ -n "$WARMUP_SIZE" ]]; then
+  validateSizeString "$WARMUP_SIZE" "WARMUP_SIZE"
+fi
+if [[ -n "$LOOPS" ]]; then
+  validateInteger "$LOOPS" "LOOPS"
+fi
+if [[ -n "$RUNTIME" ]]; then
+  validateRuntime "$RUNTIME"
+fi
 DRIVELABEL="Drive"
-FILESYSTEMPARTITION=$(lsblk -P | grep "$TARGET" | head -n 1 | awk '{print $1}' | cut -d"=" -f2 | cut -d"\"" -f2)
+
+FILESYSTEMPARTITION=""
+if command -v lsblk &> /dev/null; then
+  FILESYSTEMPARTITION=$(lsblk -P 2>/dev/null | grep "$TARGET" | head -n 1 | awk '{print $1}' | cut -d"=" -f2 | cut -d"\"" -f2)
+fi
+if [ -z "$FILESYSTEMPARTITION" ] && command -v findmnt &> /dev/null; then
+  FILESYSTEMPARTITION=$(findmnt -n -o SOURCE "$TARGET" 2>/dev/null | sed 's|/dev/||')
+fi
+if [ -z "$FILESYSTEMPARTITION" ]; then
+  FILESYSTEMPARTITION=$(df "$TARGET" 2>/dev/null | tail +2 | awk '{print $1}' | sed 's|/dev/||')
+fi
+
 FILESYSTEMTYPE=$(df -T "$TARGET" | tail +2 | awk '{print $2}')
 FILESYSTEMSIZE=$(df -Th "$TARGET" | tail +2 | awk '{print $3}')
 ISOVERLAY=0
@@ -236,18 +382,17 @@ else
   DRIVENAME="Unknown"
   DRIVESIZE="Unknown"
 fi
+if [ "$DRIVE" = "Unknown" ]; then
+  DRIVEINFO="Unknown"
+else
+  DRIVEINFO="$DRIVENAME ($DRIVE, $DRIVESIZE) $DRIVEDETAILS"
+fi
 if [ ! -z $JOB ]; then
   PROFILE="Job \"$JOB\""
   loadJob
 else
   case "$PROFILE" in
-    default)
-      loadDefaultProfile
-      ;;
-    nvme)
-      loadNVMeProfile
-      ;;
-    *)
+    ""|auto)
       if [ $ISNVME -eq 1 ]; then
         PROFILE="auto (nvme)"
         loadNVMeProfile
@@ -256,32 +401,66 @@ else
         loadDefaultProfile
       fi
       ;;
+    default)
+      loadDefaultProfile
+      ;;
+    nvme)
+      loadNVMeProfile
+      ;;
+    *)
+      error 1 "Invalid PROFILE: $(color $BOLD $WHITE)$PROFILE$(color $RESET). Allowed values are 'auto', 'default', or 'nvme'."
+      ;;
   esac
 fi
 case "$IO" in
+  ""|direct)
+    IO="direct (synchronous)"
+    DIRECT=1
+    ;;
   buffered)
     IO="buffered (asynchronous)"
     DIRECT=0
     ;;
   *)
-    IO="direct (synchronous)"
-    DIRECT=1
+    error 1 "Invalid IO mode: $(color $BOLD $WHITE)$IO$(color $RESET). Allowed values are 'direct' or 'buffered'."
     ;;
 esac
 case "$DATA" in
+  ""|random|rand)
+    DATA="random"
+    WRITEZERO=0
+    ;;
   zero | 0 | 0x00)
     DATA="zero (0x00)"
     WRITEZERO=1
     ;;
   *)
-    DATA="random"
-    WRITEZERO=0
+    error 1 "Invalid DATA pattern: $(color $BOLD $WHITE)$DATA$(color $RESET). Allowed values are 'random' or 'zero'."
     ;;
 esac
 SIZE="${SIZE:-1G}"
 BYTESIZE=$(toBytes $SIZE)
 WARMUP="${WARMUP:-0}"
-if [ ! -z $LOOPS ]; then
+if [ -z "$WARMUP_SIZE" ]; then
+  case "$PROFILE" in
+    *nvme*) WARMUP_SIZE="64M" ;;
+    *) WARMUP_SIZE="8M" ;;
+  esac
+fi
+validateSizeString "$WARMUP_SIZE" "WARMUP_SIZE"
+WARMUP_BLOCK_BYTES=$(toBytes $WARMUP_SIZE)
+if [ -z "$WARMUP_BLOCK_BYTES" ] || [ "$WARMUP_BLOCK_BYTES" -le 0 ]; then
+  WARMUP_BLOCK_BYTES=$(toBytes 8M)
+  WARMUP_SIZE="8M"
+fi
+BLOCK_MB=$((WARMUP_BLOCK_BYTES / 1024 / 1024))
+[ "$BLOCK_MB" -lt 1 ] && BLOCK_MB=1
+[ "$BLOCK_MB" -gt 1024 ] && BLOCK_MB=1024
+
+if [[ -n "$LOOPS" ]] && [[ -n "$RUNTIME" ]]; then
+  LIMIT="Loops: $LOOPS (max $RUNTIME each)"
+  LIMIT_OPTION="--loops=$LOOPS --runtime=$RUNTIME"
+elif [[ -n "$LOOPS" ]]; then
   LIMIT="Loops: $LOOPS"
   LIMIT_OPTION="--loops=$LOOPS"
 else
@@ -292,16 +471,23 @@ fi
 
 echo -e "$(color $BOLD $WHITE)Configuration:$(color $RESET)
 - Target: $TARGET
-  - $DRIVELABEL: $DRIVENAME ($DRIVE, $DRIVESIZE) $DRIVEDETAILS
+  - $DRIVELABEL: $DRIVEINFO
   - Filesystem: $FILESYSTEMTYPE ($FILESYSTEMPARTITION, $FILESYSTEMSIZE)
 - Profile: $PROFILE
   - I/O: $IO
   - Data: $DATA
   - Size: $SIZE
-  - Warmup: $WARMUP
+  - Warmup: $WARMUP$([ "$WARMUP" -eq 1 ] && echo " (block: ${BLOCK_MB}M)")
   - $LIMIT
+"
 
-The benchmark is $(color $BOLD $WHITE)running$(color $RESET), please wait..."
+DRY_RUN="${DRY_RUN:-0}"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo -e "$SYM_SUCCESS Dry run $(color $BOLD $GREEN)completed$(color $RESET). Configuration is valid."
+  exit 0
+fi
+
+echo -e "The benchmark is $(color $BOLD $WHITE)running$(color $RESET), please wait..."
 
 fio_benchmark() {
   fio --filename="$TARGET/.diskmark.tmp" \
@@ -317,18 +503,46 @@ if [ $WARMUP -eq 1 ]; then
   else
     FILESOURCE=/dev/urandom
   fi
-  dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs="$BYTESIZE" count=1 oflag=direct
+  TOTAL_MB=$((BYTESIZE / 1024 / 1024))
+  if [ "$TOTAL_MB" -eq 0 ]; then
+    dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs="$BYTESIZE" count=1 oflag=direct status=none
+  else
+    CHUNKS=$((TOTAL_MB / BLOCK_MB))
+    REMAINDER_MB=$((TOTAL_MB % BLOCK_MB))
+    if [ $CHUNKS -gt 0 ]; then
+      dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs=${BLOCK_MB}M count=$CHUNKS oflag=direct status=none
+    fi
+    if [ $REMAINDER_MB -gt 0 ]; then
+      dd if="$FILESOURCE" of="$TARGET/.diskmark.tmp" bs=1M count=$REMAINDER_MB oflag=direct conv=notrunc seek=$((CHUNKS * BLOCK_MB)) status=none
+    fi
+  fi
 fi
 
+SKIPPED_JOBS=()
+
 for ((i = 0; i < ${#NAME[@]}; i++)); do
-  TESTSIZE=$((${BYTESIZE} / ${SIZEDIVIDER[$i]:-1}))
+  DIVIDER=${SIZEDIVIDER[$i]:-1}
+  if [ "$DIVIDER" -le 0 ]; then
+    TESTSIZE=$BYTESIZE
+  else
+    TESTSIZE=$((BYTESIZE / DIVIDER))
+  fi
+  BLOCKSIZE_BYTES=$(toBytes "${BLOCKSIZE[$i]}")
+
+  if [ "$TESTSIZE" -lt "$BLOCKSIZE_BYTES" ]; then
+    SKIPPED_JOBS+=("${NAME[$i]} (size $(fromBytes $TESTSIZE) < block size ${BLOCKSIZE[$i]})")
+    echo
+    echo -e "${JOBCOLOR[$i]}${LABEL[$i]}:$(color $RESET) Skipped"
+    continue
+  fi
+
   case "${READWRITE[$i]}" in
     rand) PARSE="parseRandom" ;;
     *) PARSE="parse" ;;
   esac
 
   echo
-  echo -e "${COLOR[$i]}${LABEL[$i]}:$(color $RESET)"
+  echo -e "${JOBCOLOR[$i]}${LABEL[$i]}:$(color $RESET)"
   printf "<= Read:  "
   fio_benchmark "$TESTSIZE" "${NAME[$i]}Read" "${BLOCKSIZE[$i]}" "${IODEPTH[$i]}" "${NUMJOBS[$i]}" "${READWRITE[$i]}read"
   echo "$(${PARSE}ReadResult "${NAME[$i]}Read")"
@@ -337,6 +551,13 @@ for ((i = 0; i < ${#NAME[@]}; i++)); do
   echo "$(${PARSE}WriteResult "${NAME[$i]}Write")"
 done
 
-echo -e "\n✅ The benchmark is $(color $BOLD $GREEN)finished$(color $RESET)."
+if [ ${#SKIPPED_JOBS[@]} -gt 0 ]; then
+  echo -e "\n$SYM_SUCCESS The benchmark is $(color $BOLD $GREEN)finished$(color $RESET) with $(color $BOLD $YELLOW)warnings$(color $RESET):"
+  for job in "${SKIPPED_JOBS[@]}"; do
+    echo -e "  - $job"
+  done
+else
+  echo -e "\n$SYM_SUCCESS The benchmark is $(color $BOLD $GREEN)finished$(color $RESET)."
+fi
 
 clean

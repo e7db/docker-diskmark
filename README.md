@@ -28,17 +28,19 @@ The container contains two different test profiles:
 ## Advanced usage
 
 Find below a table listing all the different parameters you can use with the container:
-| Parameter            | Type        | Default | Description |
-| :-                   | :-          |:-       | :- |
-| `PROFILE`            | Environment | auto    | The profile to apply:<br>- `auto` to try and autoselect the best one based on the used drive detection,<br>- `default`, best suited for hard disk drives,<br>- `nvme`, best suited for NMVe SSD drives. |
-| `JOB`                | Environment |         | A custom job to use: details below in the [Custom job](#custom-job) section.<br>This parameter overrides the `PROFILE` parameter. |
-| `IO`                 | Environment | direct  | The drive access mode:<br>- `direct` for synchronous I/O,<br>- `buffered` for asynchronous I/O. |
-| `DATA`               | Environment | random  | The test data:<br>- `random` to use random data,<br>- `0x00` to fill with 0 (zero) values. |
-| `SIZE`               | Environment | 1G      | The size of the test file in bytes. |
-| `WARMUP`             | Environment | 0       | When set to `1`, use a warmup phase, thus preparing the test file with `fallocate`, using either random data or zero values as set by `DATA`. |
-| `RUNTIME`            | Environment | 5s      | The test duration for each job. |
-| `LOOPS`              | Environment |         | The number of test loops performed on the test file.<br>This parameter overrides the `RUNTIME` parameter. |
-| `/disk`              | Volume      |         | The target path to benchmark. |
+| Parameter            | Type        | Default  | Description |
+| :-                   | :-          |:-        | :- |
+| `PROFILE`            | Environment | `auto`   | The profile to apply:<br>- `auto` to try and autoselect the best one based on the used drive detection,<br>- `default`, best suited for hard disk drives,<br>- `nvme`, best suited for NVMe SSD drives. |
+| `JOB`                | Environment |          | A custom job to use: details below in the [Custom job](#custom-job) section.<br>This parameter overrides the `PROFILE` parameter. |
+| `IO`                 | Environment | `direct` | The drive access mode:<br>- `direct` for synchronous I/O,<br>- `buffered` for asynchronous I/O. |
+| `DATA`               | Environment | `random` | The test data:<br>- `random` to use random data,<br>- `0x00` to fill with 0 (zero) values. |
+| `SIZE`               | Environment | `1G`     | The size of the test file (e.g., `500M`, `1G`, `10G`). |
+| `WARMUP`             | Environment | `0`      | When set to `1`, use a warmup phase, thus preparing the test file with `dd`, using either random data or zero values as set by `DATA`. |
+| `WARMUP_SIZE`        | Environment |          | Warmup block size. Defaults depend on the profile:<br>- `8M` for the default profile<br>- `64M` for the NVMe profile. |
+| `RUNTIME`            | Environment | `5s`     | The duration for each job (e.g., `1s`, `5s`, `2m`).<br>Used alone: time-based benchmark.<br>Used with `LOOPS`: caps each loop to this duration. |
+| `LOOPS`              | Environment |          | The number of test loops to run.<br>Used alone: runs exactly N loops with no time limit.<br>Used with `RUNTIME`: runs N loops, each capped to `RUNTIME`. |
+| `DRY_RUN`            | Environment | `0`      | When set to `1`, validates configuration without running the benchmark. |
+| `/disk`              | Volume      |          | The target path to benchmark. |
 
 By default, a 1 GB test file is used, with a 5 seconds duration for each test, reading and writing random bytes on the disk where Docker is installed.
 
@@ -48,6 +50,16 @@ For example, you can use a 4 GB file, looping each test twice, but after a warmu
 You can achieve this using the following command:  
 ```
 docker run -it --rm -e SIZE=4G -e WARMUP=1 -e LOOPS=2 -e DATA=0x00 e7db/diskmark
+```
+
+You can also combine `LOOPS` and `RUNTIME` for hybrid mode — run a fixed number of loops, but cap each loop's duration:
+```
+docker run -it --rm -e SIZE=1G -e LOOPS=3 -e RUNTIME=10s e7db/diskmark
+```
+
+Warmup block size is tunable with `WARMUP_SIZE` (e.g. `8M`, `64M`, `128M`). By default it adapts to the selected profile: `8M` for the default profile (HDD-friendly) and `64M` for the NVMe profile. You can override it explicitly if needed:  
+```
+docker run -it --rm -e WARMUP=1 -e WARMUP_SIZE=128M e7db/diskmark
 ```
 
 ### Force profile
