@@ -1,0 +1,579 @@
+name: Tests
+
+on:
+  push:
+    tags:
+      - "*"
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RESULTS_FILE: /tmp/test_results.txt
+
+jobs:
+  input-validation:
+    name: Input Validation Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup test helpers
+        run: |
+          cat > /tmp/test_helpers.sh << 'EOF'
+          GREEN='\033[32m'
+          RED='\033[31m'
+          RESET='\033[0m'
+
+          # Run a test that should succeed
+          run_valid() {
+            local name="$1"
+            shift
+            if "$@" > /dev/null 2>&1; then
+              echo -e "${GREEN}✓ Passed${RESET}: $name"
+              echo "pass:$name" >> "$RESULTS_FILE"
+            else
+              echo -e "${RED}✗ Failed${RESET}: $name"
+              echo "fail:$name" >> "$RESULTS_FILE"
+            fi
+            return 0  # Always return success to continue running tests
+          }
+
+          # Run a test that should fail (invalid input)
+          run_invalid() {
+            local name="$1"
+            shift
+            if "$@" > /dev/null 2>&1; then
+              echo -e "${RED}✗ Failed (should have been rejected)${RESET}: $name"
+              echo "fail:$name" >> "$RESULTS_FILE"
+            else
+              echo -e "${GREEN}✓ Passed (correctly rejected)${RESET}: $name"
+              echo "pass:$name" >> "$RESULTS_FILE"
+            fi
+            return 0  # Always return success to continue running tests
+          }
+          EOF
+          touch "$RESULTS_FILE"
+
+      - name: Build test image
+        run: docker build -t diskmark:test .
+
+      # ============================================
+      # VALID INPUT TESTS - Should all succeed
+      # ============================================
+
+      - name: "Valid: Default configuration"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "Default configuration" docker run --rm -e DRY_RUN=1 diskmark:test
+
+      - name: "Valid: SIZE variations"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "SIZE=512K" docker run --rm -e DRY_RUN=1 -e SIZE=512K diskmark:test
+          run_valid "SIZE=100M" docker run --rm -e DRY_RUN=1 -e SIZE=100M diskmark:test
+          run_valid "SIZE=1G" docker run --rm -e DRY_RUN=1 -e SIZE=1G diskmark:test
+          run_valid "SIZE=2T" docker run --rm -e DRY_RUN=1 -e SIZE=2T diskmark:test
+          run_valid "SIZE=1P" docker run --rm -e DRY_RUN=1 -e SIZE=1P diskmark:test
+          run_valid "SIZE=100m (lowercase)" docker run --rm -e DRY_RUN=1 -e SIZE=100m diskmark:test
+          run_valid "SIZE=1g (lowercase)" docker run --rm -e DRY_RUN=1 -e SIZE=1g diskmark:test
+
+      - name: "Valid: PROFILE options"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "PROFILE=auto" docker run --rm -e DRY_RUN=1 -e PROFILE=auto diskmark:test
+          run_valid "PROFILE=default" docker run --rm -e DRY_RUN=1 -e PROFILE=default diskmark:test
+          run_valid "PROFILE=nvme" docker run --rm -e DRY_RUN=1 -e PROFILE=nvme diskmark:test
+
+      - name: "Valid: IO modes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "IO=direct" docker run --rm -e DRY_RUN=1 -e IO=direct diskmark:test
+          run_valid "IO=buffered" docker run --rm -e DRY_RUN=1 -e IO=buffered diskmark:test
+
+      - name: "Valid: DATA patterns"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "DATA=random" docker run --rm -e DRY_RUN=1 -e DATA=random diskmark:test
+          run_valid "DATA=rand" docker run --rm -e DRY_RUN=1 -e DATA=rand diskmark:test
+          run_valid "DATA=zero" docker run --rm -e DRY_RUN=1 -e DATA=zero diskmark:test
+          run_valid "DATA=0" docker run --rm -e DRY_RUN=1 -e DATA=0 diskmark:test
+          run_valid "DATA=0x00" docker run --rm -e DRY_RUN=1 -e DATA=0x00 diskmark:test
+
+      - name: "Valid: WARMUP options"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "WARMUP=0" docker run --rm -e DRY_RUN=1 -e WARMUP=0 diskmark:test
+          run_valid "WARMUP=1" docker run --rm -e DRY_RUN=1 -e WARMUP=1 diskmark:test
+          run_valid "WARMUP=1 WARMUP_SIZE=8M" docker run --rm -e DRY_RUN=1 -e WARMUP=1 -e WARMUP_SIZE=8M diskmark:test
+          run_valid "WARMUP=1 WARMUP_SIZE=64M" docker run --rm -e DRY_RUN=1 -e WARMUP=1 -e WARMUP_SIZE=64M diskmark:test
+          run_valid "WARMUP=1 WARMUP_SIZE=128M" docker run --rm -e DRY_RUN=1 -e WARMUP=1 -e WARMUP_SIZE=128M diskmark:test
+
+      - name: "Valid: RUNTIME formats"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "RUNTIME=500ms" docker run --rm -e DRY_RUN=1 -e RUNTIME=500ms diskmark:test
+          run_valid "RUNTIME=5s" docker run --rm -e DRY_RUN=1 -e RUNTIME=5s diskmark:test
+          run_valid "RUNTIME=2m" docker run --rm -e DRY_RUN=1 -e RUNTIME=2m diskmark:test
+          run_valid "RUNTIME=1h" docker run --rm -e DRY_RUN=1 -e RUNTIME=1h diskmark:test
+
+      - name: "Valid: LOOPS option"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "LOOPS=1" docker run --rm -e DRY_RUN=1 -e LOOPS=1 diskmark:test
+          run_valid "LOOPS=5" docker run --rm -e DRY_RUN=1 -e LOOPS=5 diskmark:test
+          run_valid "LOOPS=100" docker run --rm -e DRY_RUN=1 -e LOOPS=100 diskmark:test
+
+      - name: "Valid: Custom JOB formats"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "JOB=SEQ1MQ8T1" docker run --rm -e DRY_RUN=1 -e JOB=SEQ1MQ8T1 diskmark:test
+          run_valid "JOB=SEQ128KQ32T1" docker run --rm -e DRY_RUN=1 -e JOB=SEQ128KQ32T1 diskmark:test
+          run_valid "JOB=RND4KQ32T16" docker run --rm -e DRY_RUN=1 -e JOB=RND4KQ32T16 diskmark:test
+          run_valid "JOB=RND4KQ1T1" docker run --rm -e DRY_RUN=1 -e JOB=RND4KQ1T1 diskmark:test
+          run_valid "JOB=SEQ4MQ1T4" docker run --rm -e DRY_RUN=1 -e JOB=SEQ4MQ1T4 diskmark:test
+
+      - name: "Valid: Combined parameters"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "SIZE+WARMUP+PROFILE+IO+DATA" docker run --rm -e DRY_RUN=1 -e SIZE=2G -e WARMUP=1 -e WARMUP_SIZE=64M -e PROFILE=nvme -e IO=direct -e DATA=random diskmark:test
+          run_valid "SIZE+LOOPS+DATA+IO" docker run --rm -e DRY_RUN=1 -e SIZE=512M -e LOOPS=3 -e DATA=zero -e IO=buffered diskmark:test
+
+      # ============================================
+      # INVALID INPUT TESTS - Should all fail
+      # ============================================
+
+      - name: "Invalid: SIZE - negative value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "SIZE=-1G" docker run --rm -e DRY_RUN=1 -e SIZE=-1G diskmark:test
+
+      - name: "Invalid: SIZE - zero value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "SIZE=0" docker run --rm -e DRY_RUN=1 -e SIZE=0 diskmark:test
+
+      - name: "Invalid: SIZE - invalid unit"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "SIZE=1X" docker run --rm -e DRY_RUN=1 -e SIZE=1X diskmark:test
+
+      - name: "Invalid: SIZE - non-numeric"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "SIZE=abc" docker run --rm -e DRY_RUN=1 -e SIZE=abc diskmark:test
+
+      - name: "Valid: SIZE - empty string (defaults to 1G)"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "SIZE=(empty, defaults to 1G)" docker run --rm -e DRY_RUN=1 -e SIZE= diskmark:test
+
+      - name: "Invalid: SIZE - float value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "SIZE=2.5G" docker run --rm -e DRY_RUN=1 -e SIZE=2.5G diskmark:test
+
+      - name: "Invalid: WARMUP - not 0 or 1"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "WARMUP=2" docker run --rm -e DRY_RUN=1 -e WARMUP=2 diskmark:test
+          run_invalid "WARMUP=yes" docker run --rm -e DRY_RUN=1 -e WARMUP=yes diskmark:test
+          run_invalid "WARMUP=-1" docker run --rm -e DRY_RUN=1 -e WARMUP=-1 diskmark:test
+
+      - name: "Invalid: WARMUP_SIZE - invalid format"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "WARMUP_SIZE=invalid" docker run --rm -e DRY_RUN=1 -e WARMUP=1 -e WARMUP_SIZE=invalid diskmark:test
+          run_invalid "WARMUP_SIZE=-8M" docker run --rm -e DRY_RUN=1 -e WARMUP=1 -e WARMUP_SIZE=-8M diskmark:test
+
+      - name: "Invalid: IO - invalid mode"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "IO=sync" docker run --rm -e DRY_RUN=1 -e IO=sync diskmark:test
+          run_invalid "IO=async" docker run --rm -e DRY_RUN=1 -e IO=async diskmark:test
+
+      - name: "Invalid: DATA - invalid pattern"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "DATA=ones" docker run --rm -e DRY_RUN=1 -e DATA=ones diskmark:test
+          run_invalid "DATA=0xFF" docker run --rm -e DRY_RUN=1 -e DATA=0xFF diskmark:test
+
+      - name: "Invalid: PROFILE - invalid value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "PROFILE=fast" docker run --rm -e DRY_RUN=1 -e PROFILE=fast diskmark:test
+          run_invalid "PROFILE=ssd" docker run --rm -e DRY_RUN=1 -e PROFILE=ssd diskmark:test
+
+      - name: "Invalid: RUNTIME - invalid format"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "RUNTIME=5 (no unit)" docker run --rm -e DRY_RUN=1 -e RUNTIME=5 diskmark:test
+          run_invalid "RUNTIME=5sec" docker run --rm -e DRY_RUN=1 -e RUNTIME=5sec diskmark:test
+          run_invalid "RUNTIME=-5s" docker run --rm -e DRY_RUN=1 -e RUNTIME=-5s diskmark:test
+
+      - name: "Invalid: LOOPS - not a positive integer"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "LOOPS=0" docker run --rm -e DRY_RUN=1 -e LOOPS=0 diskmark:test
+          run_invalid "LOOPS=-1" docker run --rm -e DRY_RUN=1 -e LOOPS=-1 diskmark:test
+          run_invalid "LOOPS=abc" docker run --rm -e DRY_RUN=1 -e LOOPS=abc diskmark:test
+
+      - name: "Valid: LOOPS and RUNTIME together"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "LOOPS+RUNTIME (hybrid mode)" docker run --rm -e DRY_RUN=1 -e LOOPS=5 -e RUNTIME=10s diskmark:test
+
+      - name: "Invalid: JOB - malformed job name"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "JOB=INVALID" docker run --rm -e DRY_RUN=1 -e JOB=INVALID diskmark:test
+          run_invalid "JOB=SEQ1M (missing Q and T)" docker run --rm -e DRY_RUN=1 -e JOB=SEQ1M diskmark:test
+          run_invalid "JOB=RND4KQ32 (missing T)" docker run --rm -e DRY_RUN=1 -e JOB=RND4KQ32 diskmark:test
+          run_invalid "JOB=XXX4KQ32T1 (invalid prefix)" docker run --rm -e DRY_RUN=1 -e JOB=XXX4KQ32T1 diskmark:test
+
+      - name: "Invalid: DRY_RUN - not 0 or 1"
+        run: |
+          source /tmp/test_helpers.sh
+          run_invalid "DRY_RUN=yes" docker run --rm -e DRY_RUN=yes diskmark:test
+
+      # ============================================
+      # EDGE CASE TESTS
+      # ============================================
+
+      - name: "Edge: Very large SIZE value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "SIZE=999P" docker run --rm -e DRY_RUN=1 -e SIZE=999P diskmark:test
+
+      - name: "Edge: Minimum valid SIZE"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "SIZE=1 (bytes)" docker run --rm -e DRY_RUN=1 -e SIZE=1 diskmark:test
+
+      - name: "Edge: Very short RUNTIME"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "RUNTIME=1ms" docker run --rm -e DRY_RUN=1 -e RUNTIME=1ms diskmark:test
+
+      - name: "Edge: Very long RUNTIME"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "RUNTIME=999h" docker run --rm -e DRY_RUN=1 -e RUNTIME=999h diskmark:test
+
+      - name: "Edge: High LOOPS value"
+        run: |
+          source /tmp/test_helpers.sh
+          run_valid "LOOPS=9999" docker run --rm -e DRY_RUN=1 -e LOOPS=9999 diskmark:test
+
+      # ============================================
+      # VALIDATION SUMMARY
+      # ============================================
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo ""
+          echo "============================================"
+          echo "       INPUT VALIDATION TEST SUMMARY"
+          echo "============================================"
+          echo ""
+
+          PASS_COUNT=$(grep -c "^pass:" "$RESULTS_FILE" 2>/dev/null || echo 0)
+          FAIL_COUNT=$(grep -c "^fail:" "$RESULTS_FILE" 2>/dev/null || echo 0)
+          TOTAL=$((PASS_COUNT + FAIL_COUNT))
+
+          echo "✅ Passed: $PASS_COUNT"
+          echo "❌ Failed: $FAIL_COUNT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "   Total: $TOTAL"
+          echo ""
+
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "Failed tests:"
+            grep "^fail:" "$RESULTS_FILE" | cut -d: -f2- | while read -r test; do
+              echo "  ❌ $test"
+            done
+            echo ""
+            exit 1
+          else
+            echo "All tests passed! 🎉"
+          fi
+
+  # ============================================
+  # REAL BENCHMARK TESTS (non dry-run)
+  # ============================================
+  benchmark:
+    name: Benchmark Tests
+    runs-on: ubuntu-latest
+    needs: input-validation
+    env:
+      RESULTS_FILE: /tmp/benchmark_results.txt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup test helpers
+        run: |
+          cat > /tmp/test_helpers.sh << 'EOF'
+          GREEN='\033[32m'
+          RED='\033[31m'
+          RESET='\033[0m'
+
+          run_benchmark() {
+            local name="$1"
+            shift
+            if "$@"; then
+              echo -e "${GREEN}✓ Passed${RESET}: $name"
+              echo "pass:$name" >> "$RESULTS_FILE"
+            else
+              echo -e "${RED}✗ Failed${RESET}: $name"
+              echo "fail:$name" >> "$RESULTS_FILE"
+            fi
+            return 0  # Always return success to continue running tests
+          }
+          EOF
+          touch "$RESULTS_FILE"
+
+      - name: Build test image
+        run: docker build -t diskmark:test .
+
+      # ---------- PROFILE variations ----------
+      - name: "PROFILE: auto"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "PROFILE=auto" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=auto diskmark:test
+
+      - name: "PROFILE: default"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "PROFILE=default" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=default diskmark:test
+
+      - name: "PROFILE: nvme"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "PROFILE=nvme" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=nvme diskmark:test
+
+      # ---------- IO variations ----------
+      - name: "IO: direct"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "IO=direct" docker run --rm -e SIZE=16M -e RUNTIME=1s -e IO=direct diskmark:test
+
+      - name: "IO: buffered"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "IO=buffered" docker run --rm -e SIZE=16M -e RUNTIME=1s -e IO=buffered diskmark:test
+
+      # ---------- DATA variations ----------
+      - name: "DATA: random"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "DATA=random" docker run --rm -e SIZE=16M -e RUNTIME=1s -e DATA=random diskmark:test
+
+      - name: "DATA: rand"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "DATA=rand" docker run --rm -e SIZE=16M -e RUNTIME=1s -e DATA=rand diskmark:test
+
+      - name: "DATA: zero"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "DATA=zero" docker run --rm -e SIZE=16M -e RUNTIME=1s -e DATA=zero diskmark:test
+
+      - name: "DATA: 0"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "DATA=0" docker run --rm -e SIZE=16M -e RUNTIME=1s -e DATA=0 diskmark:test
+
+      - name: "DATA: 0x00"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "DATA=0x00" docker run --rm -e SIZE=16M -e RUNTIME=1s -e DATA=0x00 diskmark:test
+
+      # ---------- SIZE variations ----------
+      - name: "SIZE: bytes only"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE=1048576 (bytes)" docker run --rm -e SIZE=1048576 -e RUNTIME=1s diskmark:test
+
+      - name: "SIZE: kilobytes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE=512K" docker run --rm -e SIZE=512K -e RUNTIME=1s diskmark:test
+
+      - name: "SIZE: megabytes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE=16M" docker run --rm -e SIZE=16M -e RUNTIME=1s diskmark:test
+
+      - name: "SIZE: lowercase unit"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE=16m (lowercase)" docker run --rm -e SIZE=16m -e RUNTIME=1s diskmark:test
+
+      # ---------- WARMUP variations ----------
+      - name: "WARMUP: disabled"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "WARMUP=0" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=0 diskmark:test
+
+      - name: "WARMUP: enabled (default block)"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "WARMUP=1" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=1 diskmark:test
+
+      - name: "WARMUP: with custom WARMUP_SIZE"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "WARMUP=1 WARMUP_SIZE=4M" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=1 -e WARMUP_SIZE=4M diskmark:test
+
+      # ---------- RUNTIME variations ----------
+      - name: "RUNTIME: milliseconds"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "RUNTIME=500ms" docker run --rm -e SIZE=16M -e RUNTIME=500ms diskmark:test
+
+      - name: "RUNTIME: seconds"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "RUNTIME=1s" docker run --rm -e SIZE=16M -e RUNTIME=1s diskmark:test
+
+      # ---------- LOOPS variations ----------
+      - name: "LOOPS: single loop"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "LOOPS=1" docker run --rm -e SIZE=16M -e LOOPS=1 diskmark:test
+
+      - name: "LOOPS: multiple loops"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "LOOPS=2" docker run --rm -e SIZE=16M -e LOOPS=2 diskmark:test
+
+      # ---------- JOB variations ----------
+      - name: "JOB: sequential kilobytes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "JOB=SEQ128KQ1T1" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=SEQ128KQ1T1 diskmark:test
+
+      - name: "JOB: sequential megabytes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "JOB=SEQ1MQ8T1" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=SEQ1MQ8T1 diskmark:test
+
+      - name: "JOB: random access"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "JOB=RND4KQ1T1" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=RND4KQ1T1 diskmark:test
+
+      - name: "JOB: high queue depth"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "JOB=RND4KQ32T1" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=RND4KQ32T1 diskmark:test
+
+      - name: "JOB: multiple threads"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "JOB=RND4KQ1T4" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=RND4KQ1T4 diskmark:test
+
+      # ---------- COMBINED PARAMETERS ----------
+      - name: "Combo: NVMe profile + warmup + random data"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "NVMe+warmup+random" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=nvme -e WARMUP=1 -e DATA=random diskmark:test
+
+      - name: "Combo: Default profile + zero data + loops"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "default+zero+loops" docker run --rm -e SIZE=16M -e LOOPS=1 -e PROFILE=default -e DATA=zero diskmark:test
+
+      - name: "Combo: Buffered IO + warmup + custom block size"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "buffered+warmup+custom" docker run --rm -e SIZE=16M -e RUNTIME=1s -e IO=buffered -e WARMUP=1 -e WARMUP_SIZE=2M diskmark:test
+
+      - name: "Combo: Custom job + warmup + zero data"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "job+warmup+zero" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=SEQ1MQ1T1 -e WARMUP=1 -e DATA=zero diskmark:test
+
+      # ---------- EDGE CASES ----------
+      - name: "Edge: Cross-profile (NVMe profile with buffered IO)"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "NVMe+buffered" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=nvme -e IO=buffered diskmark:test
+
+      - name: "Edge: Mixed data and IO modes"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "0x00+buffered+warmup" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=1 -e DATA=0x00 -e IO=buffered diskmark:test
+
+      - name: "Edge: Custom job with PROFILE set (job takes precedence)"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "job+profile" docker run --rm -e SIZE=16M -e RUNTIME=1s -e JOB=RND4KQ32T1 -e PROFILE=nvme diskmark:test
+
+      - name: "Edge: Small warmup block size"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "WARMUP_SIZE=1K" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=1 -e WARMUP_SIZE=1K diskmark:test
+
+      - name: "Edge: WARMUP_SIZE set with WARMUP=0 (ignored)"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "WARMUP=0+WARMUP_SIZE" docker run --rm -e SIZE=16M -e RUNTIME=1s -e WARMUP=0 -e WARMUP_SIZE=64M diskmark:test
+
+      - name: "Edge: All parameters explicitly set"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "all params" docker run --rm -e SIZE=16M -e RUNTIME=1s -e PROFILE=default -e IO=direct -e DATA=random -e WARMUP=1 -e WARMUP_SIZE=4M diskmark:test
+
+      - name: "Edge: Minimal size and runtime"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE=4K RUNTIME=100ms" docker run --rm -e SIZE=4K -e RUNTIME=100ms diskmark:test
+
+      - name: "Edge: SIZE smaller than WARMUP_SIZE"
+        run: |
+          source /tmp/test_helpers.sh
+          run_benchmark "SIZE<WARMUP_SIZE" docker run --rm -e SIZE=1M -e RUNTIME=1s -e WARMUP=1 -e WARMUP_SIZE=8M diskmark:test
+
+      # ============================================
+      # BENCHMARK SUMMARY
+      # ============================================
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo ""
+          echo "============================================"
+          echo "         BENCHMARK TEST SUMMARY"
+          echo "============================================"
+          echo ""
+
+          PASS_COUNT=$(grep -c "^pass:" "$RESULTS_FILE" 2>/dev/null || echo 0)
+          FAIL_COUNT=$(grep -c "^fail:" "$RESULTS_FILE" 2>/dev/null || echo 0)
+          TOTAL=$((PASS_COUNT + FAIL_COUNT))
+
+          echo "✅ Passed: $PASS_COUNT"
+          echo "❌ Failed: $FAIL_COUNT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "   Total: $TOTAL"
+          echo ""
+
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "Failed tests:"
+            grep "^fail:" "$RESULTS_FILE" | cut -d: -f2- | while read -r test; do
+              echo "  ❌ $test"
+            done
+            echo ""
+            exit 1
+          else
+            echo "All benchmarks passed! 🎉"
+          fi
