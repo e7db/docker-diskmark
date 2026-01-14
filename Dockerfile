@@ -16,6 +16,7 @@ RUN echo "$VERSION" > /etc/diskmark-version
 FROM scratch
 COPY --from=builder /diskmark/ /
 COPY --from=version /etc/diskmark-version /etc/diskmark-version
+COPY lib/ /usr/lib/diskmark/
 COPY diskmark.sh /usr/bin/diskmark
 VOLUME /disk
 WORKDIR /disk
