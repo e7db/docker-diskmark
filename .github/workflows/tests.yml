@@ -20,6 +20,102 @@ env:
 jobs:
 
   # ============================================
+  # PLATFORM COMPATIBILITY
+  # ============================================
+
+  platform-compatibility:
+    name: "Compatibility: ${{ matrix.distro }}"
+    runs-on: ubuntu-latest
+    needs: validation-env
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            image: debian:bookworm-slim
+          - distro: ubuntu
+            image: ubuntu:24.04
+          - distro: fedora
+            image: fedora:41
+          - distro: alpine
+            image: alpine:latest
+          - distro: archlinux
+            image: archlinux:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup test helpers
+        run: |
+          cat > /tmp/test_helpers.sh << 'HELPERS'
+          GREEN='\033[32m'
+          RED='\033[31m'
+          RESET='\033[0m'
+          STEP_FAILED=0
+
+          run_valid() {
+            local name="$1"
+            shift
+            if output=$("$@" 2>&1); then
+              echo -e "${GREEN}✓ Passed${RESET}: $name"
+              echo "pass:$name" >> "$RESULTS_FILE"
+            else
+              echo -e "${RED}✗ Failed${RESET}: $name"
+              echo "$output" | head -5
+              echo "fail:$name" >> "$RESULTS_FILE"
+              STEP_FAILED=1
+            fi
+          }
+
+          check_step_result() {
+            exit $STEP_FAILED
+          }
+          HELPERS
+          touch "$RESULTS_FILE"
+
+      - name: Build test image
+        run: docker build -t diskmark:test .
+
+      - name: "Test: Run on ${{ matrix.distro }}"
+        run: |
+          source /tmp/test_helpers.sh
+
+          CONTAINER_ID=$(docker create \
+            --privileged \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            ${{ matrix.image }} \
+            sleep infinity)
+          docker start "$CONTAINER_ID"
+
+          case "${{ matrix.distro }}" in
+            debian|ubuntu)
+              docker exec "$CONTAINER_ID" sh -c "apt-get update -qq && apt-get install -y -qq docker.io > /dev/null 2>&1"
+              ;;
+            fedora)
+              docker exec "$CONTAINER_ID" sh -c "dnf install -y -q docker > /dev/null 2>&1"
+              ;;
+            alpine)
+              docker exec "$CONTAINER_ID" sh -c "apk add --no-cache docker-cli > /dev/null 2>&1"
+              ;;
+            archlinux)
+              docker exec "$CONTAINER_ID" sh -c "pacman -Sy --noconfirm docker > /dev/null 2>&1"
+              ;;
+          esac
+
+          run_valid "DRY_RUN on ${{ matrix.distro }}" \
+            docker exec "$CONTAINER_ID" docker run --rm -e DRY_RUN=1 diskmark:test
+
+          run_valid "No 'command not found' errors on ${{ matrix.distro }}" \
+            docker exec "$CONTAINER_ID" sh -c "! docker run --rm -e DRY_RUN=1 diskmark:test 2>&1 | grep -i 'command not found'"
+
+          run_valid "No 'not found' errors on ${{ matrix.distro }}" \
+            docker exec "$CONTAINER_ID" sh -c "! docker run --rm -e DRY_RUN=1 diskmark:test 2>&1 | grep -i 'not found'"
+
+          docker stop "$CONTAINER_ID" > /dev/null
+          docker rm "$CONTAINER_ID" > /dev/null
+          check_step_result
+
+  # ============================================
   # INPUT VALIDATION - ENV VARIABLES (dry-run)
   # ============================================
 
